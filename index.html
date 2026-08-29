@@ -1,0 +1,109 @@
+<input type="file" id="videoInput" accept="video/*">
+
+<div>Keep Original Resolution</div>
+<input type="checkbox" id="keepRes">
+
+<div>Interlace Visibility</div>
+<input type="range" id="vis" min="1" max="100" value="100">
+
+<div>Interlace Past Frames</div>
+<input type="range" id="depth" min="1" max="10" value="1">
+
+<video id="video" style="display:none;" loop></video>
+<canvas id="canvas"></canvas>
+
+<button id="recordBtn">Start Recording</button>
+<button id="stopBtn">Stop & Download</button>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const VHS_W = 320;
+const VHS_H = 240;
+const NTSC = 1000 / 29.97;
+
+let frameBuffer = [];
+let recorder;
+let chunks = [];
+let last = 0;
+
+document.getElementById("videoInput").onchange = e => {
+  const file = e.target.files[0];
+  video.src = URL.createObjectURL(file);
+
+  video.onloadedmetadata = () => {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    video.play();
+    requestAnimationFrame(loop);
+  };
+};
+
+function loop(t) {
+  if (!last) last = t;
+  const d = t - last;
+  if (d >= NTSC && !video.paused && !video.ended) {
+    last = t;
+    drawFrame();
+  }
+  requestAnimationFrame(loop);
+}
+
+function drawFrame() {
+  const keep = document.getElementById("keepRes").checked;
+
+  const cw = canvas.width;
+  const ch = canvas.height;
+
+  let temp = document.createElement("canvas");
+  temp.width = keep ? cw : VHS_W;
+  temp.height = keep ? ch : VHS_H;
+
+  temp.getContext("2d").drawImage(video, 0, 0, temp.width, temp.height);
+
+  frameBuffer.push(temp);
+  if (frameBuffer.length > 20) frameBuffer.shift();
+
+  const depth = parseInt(document.getElementById("depth").value);
+  const idx = Math.max(0, frameBuffer.length - 1 - depth);
+  const fieldFrame = frameBuffer[idx];
+
+  const vis = document.getElementById("vis").value / 100;
+  const stripe = 2;
+
+  ctx.drawImage(video, 0, 0, cw, ch);
+
+  ctx.globalAlpha = vis;
+
+  for (let y = 0; y < ch; y += stripe * 2) {
+    ctx.drawImage(
+      fieldFrame,
+      0, y / (ch / fieldFrame.height), fieldFrame.width, stripe,
+      0, y, cw, stripe
+    );
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+document.getElementById("recordBtn").onclick = () => {
+  chunks = [];
+  recorder = new MediaRecorder(canvas.captureStream(), { mimeType:"video/webm" });
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.start();
+};
+
+document.getElementById("stopBtn").onclick = () => {
+  recorder.stop();
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type:"video/webm" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "vhs_interlace_depth.webm";
+    a.click();
+  };
+};
+</script>
